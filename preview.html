@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>信发轮播表编辑器 - 预览版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+        .canvas-bg { background-image: radial-gradient(#d1d5db 1px, transparent 1px); background-size: 20px 20px; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        @keyframes slideInRight {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideInLeft {
+            from { transform: translateX(-100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .animate-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        /* Resizer handle styling */
+        .handle-dot {
+            width: 12px;
+            height: 12px;
+            background: white;
+            border: 2px solid #3b82f6;
+            border-radius: 50%;
+            position: absolute;
+            z-index: 30;
+        }
+        .handle-dot:hover {
+            background: #3b82f6;
+            transform: scale(1.2);
+            transition: all 0.2s;
+        }
+    </style>
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@19.0.0",
+        "react-dom": "https://esm.sh/react-dom@19.0.0/client"
+      }
+    }
+    </script>
+</head>
+<body class="bg-gray-100 overflow-hidden select-none">
+    <div id="root"></div>
+
+    <script type="module">
+        import React, { useState, useRef, useEffect } from 'react';
+        import ReactDOM from 'react-dom';
+
+        // --- Types & Constants ---
+        const ContentType = {
+            IMAGE: 'image',
+            VIDEO: 'video',
+            TEXT: 'text',
+            MONITOR: 'monitor',
+            WEB_H5: 'webh5',
+            QUEUE_TABLE: 'queueTable',
+            WEATHER: 'weather',
+            PRODUCT: 'product',
+            CAROUSEL_TABLE: 'carouselTable'
+        };
+
+        const ItemType = {
+            ROOM: 'room',
+            CINEMA: 'cinema',
+            STUDY: 'study'
+        };
+
+        const ITEM_DEFAULTS = {
+            [ItemType.ROOM]: [
+                { id: 'room_no', label: '包间号', enabled: true, fontSize: 16, color: '#000000', isBold: true, x: 50, y: 20 },
+                { id: 'status', label: '包间状态', enabled: true, fontSize: 14, color: '#3B82F6', isBold: false, x: 50, y: 45 },
+                { id: 'end_time', label: '结束时间', enabled: true, fontSize: 12, color: '#6B7280', isBold: false, x: 50, y: 65 },
+                { id: 'capacity', label: '包间人数', enabled: true, fontSize: 12, color: '#6B7280', isBold: false, x: 50, y: 80 },
+            ],
+            [ItemType.CINEMA]: [
+                { id: 'hall_name', label: '影厅名称', enabled: true, fontSize: 16, color: '#000000', isBold: true, x: 50, y: 20 },
+                { id: 'movie_title', label: '电影名称', enabled: true, fontSize: 14, color: '#10B981', isBold: false, x: 50, y: 45 },
+                { id: 'start_time', label: '开场时间', enabled: true, fontSize: 12, color: '#6B7280', isBold: false, x: 50, y: 65 },
+                { id: 'remaining_seats', label: '剩余座位', enabled: true, fontSize: 12, color: '#6B7280', isBold: false, x: 50, y: 80 },
+            ],
+            [ItemType.STUDY]: [
+                { id: 'seat_no', label: '座位号', enabled: true, fontSize: 16, color: '#000000', isBold: true, x: 50, y: 20 },
+                { id: 'usage_status', label: '使用状态', enabled: true, fontSize: 14, color: '#F59E0B', isBold: false, x: 50, y: 45 },
+                { id: 'remaining_time', label: '剩余时长', enabled: true, fontSize: 12, color: '#6B7280', isBold: false, x: 50, y: 65 },
+                { id: 'user_type', label: '用户类型', enabled: true, fontSize: 12, color: '#6B7280', isBold: false, x: 50, y: 80 },
+            ]
+        };
+
+        const ITEM_TYPE_LABELS = {
+            [ItemType.ROOM]: '包间',
+            [ItemType.CINEMA]: '影厅',
+            [ItemType.STUDY]: '自习室'
+        };
+
+        const LAYER_LABELS = {
+            [ContentType.IMAGE]: '图片',
+            [ContentType.VIDEO]: '视频',
+            [ContentType.TEXT]: '文字',
+            [ContentType.MONITOR]: '监控点',
+            [ContentType.WEB_H5]: '网页H5',
+            [ContentType.QUEUE_TABLE]: '叫号表',
+            [ContentType.WEATHER]: '天气',
+            [ContentType.PRODUCT]: '商品',
+            [ContentType.CAROUSEL_TABLE]: '轮播表',
+        };
+
+        const getMockValue = (type, fieldId, index) => {
+            const mocks = {
+                [ItemType.ROOM]: { room_no: (101 + index).toString(), status: index % 3 === 0 ? '空闲' : '占用', end_time: '14:30', capacity: '4人' },
+                [ItemType.CINEMA]: { hall_name: `${index + 1}号厅`, movie_title: index % 2 === 0 ? '阿凡达' : '星际穿越', start_time: '19:00', remaining_seats: '24' },
+                [ItemType.STUDY]: { seat_no: `A-${index + 1}`, usage_status: index % 2 === 0 ? '学习中' : '空置', remaining_time: '02:45', user_type: '会员' }
+            };
+            return mocks[type][fieldId] || '-';
+        };
+
+        // --- Components ---
+
+        const Sidebar = ({ activeLayers, selectedType, onSelect, onRemove }) => (
+            <div className="w-64 bg-white border-r flex flex-col">
+                <div className="p-4 border-b flex items-center justify-between">
+                    <h2 className="font-bold text-gray-800">制作内容</h2>
+                </div>
+                <div className="flex-1 overflow-y-auto p-2 space-y-2">
+                    {activeLayers.map(layer => (
+                        <div key={layer} onClick={() => onSelect(layer)} 
+                             className={`group flex items-center p-2 rounded-lg cursor-pointer transition-all border-2 ${selectedType === layer ? 'border-blue-500 bg-blue-50' : 'border-transparent hover:bg-gray-100'}`}>
+                            <div className={`w-10 h-10 rounded flex items-center justify-center mr-3 ${selectedType === layer ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/></svg>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium truncate text-gray-700">{LAYER_LABELS[layer]}</div>
+                            </div>
+                            <button onClick={(e) => { e.stopPropagation(); onRemove(layer); }} className="p-1 opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-opacity">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                            </button>
+                        </div>
+                    ))}
+                    {activeLayers.length === 0 && <div className="text-center py-10 text-gray-400">暂无内容图层</div>}
+                </div>
+            </div>
+        );
+
+        const Toolbar = ({ onAdd, activeLayers }) => {
+            const tools = [
+                { type: ContentType.IMAGE, label: '图片', icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
+                { type: ContentType.VIDEO, label: '视频', icon: 'M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z' },
+                { type: ContentType.TEXT, label: '文字', icon: 'M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z' },
+                { type: ContentType.QUEUE_TABLE, label: '叫号表', icon: 'M4 6h16M4 10h16M4 14h16M4 18h16' },
+                { type: ContentType.CAROUSEL_TABLE, label: '轮播表', icon: 'M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4' },
+                { type: ContentType.PRODUCT, label: '商品', icon: 'M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z' },
+            ];
+            return (
+                <div className="bg-white px-6 py-2 border-b flex items-center justify-center space-x-2">
+                    {tools.map(tool => (
+                        <button key={tool.type} onClick={() => onAdd(tool.type)}
+                                className={`flex items-center px-4 py-2 space-x-2 rounded transition-all border-2 ${activeLayers.includes(tool.type) ? 'bg-blue-50 text-blue-600 border-blue-500' : 'hover:bg-gray-100 text-gray-500 border-transparent'}`}>
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d={tool.icon}/></svg>
+                            <span className="font-medium text-sm">{tool.label}</span>
+                        </button>
+                    ))}
+                </div>
+            );
+        };
+
+        const ConfigPanel = ({ state, onUpdateCarousel, setEditingLayout }) => {
+            const { selectedType, carousel, isEditingLayout } = state;
+            if (selectedType !== ContentType.CAROUSEL_TABLE) {
+                return <div className="w-80 bg-white border-l p-8 text-center text-gray-400">选择轮播表以配置</div>;
+            }
+
+            if (isEditingLayout) {
+                return (
+                    <div className="w-80 bg-white border-l flex flex-col h-full animate-in">
+                        <div className="p-4 border-b bg-gray-50 flex items-center space-x-3">
+                            <button onClick={() => setEditingLayout(false)} className="p-1.5 hover:bg-gray-200 rounded text-gray-500">
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"/></svg>
+                            </button>
+                            <h2 className="font-bold text-gray-800">格子内容排版</h2>
+                        </div>
+                        <div className="flex-1 overflow-y-auto p-5 space-y-4 pb-20 scrollbar-hide">
+                            <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest">字段属性</h3>
+                            {carousel.fields.map(field => (
+                                <div key={field.id} className={`border rounded-lg p-3 space-y-3 ${field.enabled ? 'border-blue-200 bg-blue-50/10' : 'opacity-60 bg-gray-50'}`}>
+                                    <div className="flex items-center justify-between">
+                                        <span className="font-bold text-sm text-gray-700">{field.label}</span>
+                                        <input type="checkbox" checked={field.enabled} 
+                                               onChange={(e) => onUpdateCarousel({ fields: carousel.fields.map(f => f.id === field.id ? { ...f, enabled: e.target.checked } : f) })}
+                                               className="w-4 h-4 text-blue-600 rounded"/>
+                                    </div>
+                                    {field.enabled && (
+                                        <div className="flex items-center space-x-2">
+                                            <select value={field.fontSize} 
+                                                    onChange={(e) => onUpdateCarousel({ fields: carousel.fields.map(f => f.id === field.id ? { ...f, fontSize: parseInt(e.target.value) } : f) })}
+                                                    className="flex-1 text-xs p-1 border rounded bg-white font-bold">
+                                                {[10, 12, 14, 16, 18, 20, 24, 28, 32].map(s => <option key={s} value={s}>{s}px</option>)}
+                                            </select>
+                                            <button onClick={() => onUpdateCarousel({ fields: carousel.fields.map(f => f.id === field.id ? { ...f, isBold: !f.isBold } : f) })}
+                                                    className={`w-7 h-7 rounded border font-bold text-xs ${field.isBold ? 'bg-gray-800 text-white' : 'bg-white text-gray-400'}`}>B</button>
+                                            <input type="color" value={field.color} 
+                                                   onChange={(e) => onUpdateCarousel({ fields: carousel.fields.map(f => f.id === field.id ? { ...f, color: e.target.value } : f) })}
+                                                   className="w-7 h-7 border rounded cursor-pointer p-0.5"/>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                        <div className="p-4 border-t bg-white absolute bottom-0 w-80">
+                            <button onClick={() => setEditingLayout(false)} className="w-full py-2.5 bg-blue-600 text-white rounded-lg font-bold shadow-lg hover:bg-blue-700 transition-colors">保存并返回</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="w-80 bg-white border-l flex flex-col h-full animate-in">
+                    <div className="p-4 border-b bg-gray-50/50"><h2 className="font-bold text-gray-800 flex items-center space-x-2"><span className="w-2 h-2 bg-blue-500 rounded-full"></span><span>配置详情</span></h2></div>
+                    <div className="p-5 space-y-8 overflow-y-auto">
+                        <section className="space-y-3">
+                            <h3 className="font-bold text-gray-700 text-xs uppercase tracking-widest">业务类型</h3>
+                            <select value={carousel.itemType} onChange={(e) => onUpdateCarousel({ itemType: e.target.value })} 
+                                    className="w-full p-2.5 text-sm font-bold text-black border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none">
+                                {Object.entries(ItemType).map(([k, v]) => <option key={v} value={v}>{ITEM_TYPE_LABELS[v]}</option>)}
+                            </select>
+                        </section>
+                        <section className="space-y-4">
+                            <h3 className="font-bold text-gray-700 text-xs uppercase tracking-widest">网格布局</h3>
+                            <div className="grid grid-cols-2 gap-4">
+                                {['rows', 'cols'].map(key => (
+                                    <div key={key} className="space-y-1">
+                                        <label className="text-[10px] font-bold text-gray-400 uppercase">{key === 'rows' ? '行数' : '列数'}</label>
+                                        <div className="flex items-center border rounded bg-white shadow-sm overflow-hidden">
+                                            <button onClick={() => onUpdateCarousel({ [key]: Math.max(1, carousel[key] - 1) })} className="px-3 py-1.5 border-r font-bold text-black hover:bg-gray-50">-</button>
+                                            <input type="text" value={carousel[key]} readOnly className="w-full text-center text-sm font-bold text-black outline-none"/>
+                                            <button onClick={() => onUpdateCarousel({ [key]: carousel[key] + 1 })} className="px-3 py-1.5 border-l font-bold text-black hover:bg-gray-50">+</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="space-y-2">
+                                <div className="flex justify-between items-center text-[10px] font-bold text-gray-400 uppercase"><span>轮播间隔</span><span className="text-blue-600 font-bold">{carousel.duration}s</span></div>
+                                <input type="range" min="3" max="60" value={carousel.duration} onChange={(e) => onUpdateCarousel({ duration: parseInt(e.target.value) })} 
+                                       className="w-full h-1.5 bg-gray-200 rounded-lg appearance-none accent-blue-600 cursor-pointer"/>
+                            </div>
+                        </section>
+                        <section className="pt-6 border-t space-y-4">
+                            <p className="text-xs text-gray-500 leading-relaxed italic">编辑格子模板，自由拖拽内容位置，同步至全表。</p>
+                            <button onClick={() => setEditingLayout(true)} className="flex items-center justify-center space-x-2 w-full py-3 border-2 border-blue-600 text-blue-600 rounded-lg font-bold text-sm hover:bg-blue-50 transition-all">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                                <span>进入格子编辑器</span>
+                            </button>
+                        </section>
+                    </div>
+                </div>
+            );
+        };
+
+        const CanvasArea = ({ state, onUpdateCarousel }) => {
+            const { carousel, isEditingLayout, activeLayers, selectedType } = state;
+            const fields = carousel.fields.filter(f => f.enabled);
+
+            const handleResize = (type, e) => {
+                e.stopPropagation();
+                const startX = e.clientX, startY = e.clientY;
+                const startW = carousel.width, startH = carousel.height;
+                const onMouseMove = (m) => {
+                    const dx = (m.clientX - startX) * 2, dy = (m.clientY - startY) * 2;
+                    const updates = {};
+                    if (type === 'width' || type === 'both') updates.width = Math.max(100, startW + dx);
+                    if (type === 'height' || type === 'both') updates.height = Math.max(100, startH + dy);
+                    onUpdateCarousel(updates);
+                };
+                const onMouseUp = () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+            };
+
+            const handleFieldDrag = (id, e) => {
+                const rect = e.currentTarget.parentElement.getBoundingClientRect();
+                const onMouseMove = (moveEvent) => {
+                    const x = ((moveEvent.clientX - rect.left) / rect.width) * 100;
+                    const y = ((moveEvent.clientY - rect.top) / rect.height) * 100;
+                    onUpdateCarousel({ fields: carousel.fields.map(f => f.id === id ? { ...f, x: Math.max(0, Math.min(100, x)), y: Math.max(0, Math.min(100, y)) } : f) });
+                };
+                const onMouseUp = () => { window.removeEventListener('mousemove', onMouseMove); window.removeEventListener('mouseup', onMouseUp); };
+                window.addEventListener('mousemove', onMouseMove);
+                window.addEventListener('mouseup', onMouseUp);
+            };
+
+            return (
+                <main className="flex-1 canvas-bg relative p-10 overflow-auto flex justify-center items-start transition-all">
+                    <div className="bg-white shadow-2xl relative" style={{ width: '720px', height: '1280px', transform: 'scale(0.5)', transformOrigin: 'top center' }}>
+                        <div className="absolute inset-0 flex items-center justify-center p-8 bg-gray-50">
+                            {activeLayers.includes(ContentType.CAROUSEL_TABLE) && (
+                                isEditingLayout ? (
+                                    <div className="flex flex-col items-center space-y-6 animate-in">
+                                        <div className="text-sm font-bold text-blue-600 bg-blue-50 px-6 py-2 rounded-full border border-blue-200 shadow-sm">格子编辑器 (拖拽内容排版)</div>
+                                        <div className="relative bg-white border-4 border-dashed border-blue-200 shadow-xl overflow-hidden" style={{ width: '400px', height: '400px' }}>
+                                            <div className="absolute inset-0 opacity-5" style={{backgroundImage: 'linear-gradient(#4a90e2 1px, transparent 1px), linear-gradient(90deg, #4a90e2 1px, transparent 1px)', backgroundSize: '20px 20px'}}></div>
+                                            {fields.map(f => (
+                                                <div key={f.id} onMouseDown={(e) => handleFieldDrag(f.id, e)} className="absolute p-2 cursor-move hover:bg-blue-50/50 rounded-lg whitespace-nowrap z-10"
+                                                     style={{ left: `${f.x}%`, top: `${f.y}%`, transform: 'translate(-50%, -50%)', fontSize: `${f.fontSize * 1.5}px`, color: f.color, fontWeight: f.isBold ? '700' : '400' }}>
+                                                    {getMockValue(carousel.itemType, f.id, 0)}
+                                                    <div className="absolute -top-6 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[8px] px-1 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity">{f.label}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className={`relative transition-all ${selectedType === ContentType.CAROUSEL_TABLE ? 'ring-4 ring-blue-500 ring-offset-8' : ''}`}>
+                                        <div className="grid gap-px bg-gray-200 border border-gray-300 shadow-xl overflow-hidden" 
+                                             style={{ gridTemplateColumns: `repeat(${carousel.cols}, 1fr)`, gridTemplateRows: `repeat(${carousel.rows}, 1fr)`, width: `${carousel.width}px`, height: `${carousel.height}px` }}>
+                                            {Array.from({ length: carousel.rows * carousel.cols }).map((_, i) => (
+                                                <div key={i} className="bg-white relative overflow-hidden">
+                                                    {fields.map(f => (
+                                                        <div key={f.id} className="absolute pointer-events-none whitespace-nowrap"
+                                                             style={{ left: `${f.x}%`, top: `${f.y}%`, transform: 'translate(-50%, -50%)', fontSize: `${f.fontSize}px`, color: f.color, fontWeight: f.isBold ? '700' : '400' }}>
+                                                            {getMockValue(carousel.itemType, f.id, i)}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ))}
+                                        </div>
+                                        {selectedType === ContentType.CAROUSEL_TABLE && (
+                                            <>
+                                                {/* Corner Resizers */}
+                                                <div onMouseDown={(e) => handleResize('both', e)} className="handle-dot -bottom-1.5 -right-1.5 cursor-nwse-resize"></div>
+                                                <div onMouseDown={(e) => handleResize('width', e)} className="handle-dot top-1/2 -right-1.5 -translate-y-1/2 cursor-ew-resize !h-8 !rounded-lg !w-2.5"></div>
+                                                <div onMouseDown={(e) => handleResize('height', e)} className="handle-dot left-1/2 -bottom-1.5 -translate-x-1/2 cursor-ns-resize !w-8 !rounded-lg !h-2.5"></div>
+                                                <div className="handle-dot -top-1.5 -left-1.5 cursor-default"></div>
+                                                <div className="handle-dot -top-1.5 -right-1.5 cursor-default"></div>
+                                                <div className="handle-dot -bottom-1.5 -left-1.5 cursor-default"></div>
+                                            </>
+                                        )}
+                                    </div>
+                                )
+                            )}
+                        </div>
+                    </div>
+                </main>
+            );
+        };
+
+        const App = () => {
+            const [state, setState] = useState({
+                activeLayers: [ContentType.CAROUSEL_TABLE],
+                selectedType: ContentType.CAROUSEL_TABLE,
+                isEditingLayout: false,
+                carousel: {
+                    itemType: ItemType.ROOM,
+                    rows: 4, cols: 4, width: 640, height: 400, duration: 10,
+                    fields: [...ITEM_DEFAULTS[ItemType.ROOM]]
+                }
+            });
+
+            const handleAddContent = (type) => {
+                const exclusive = [ContentType.PRODUCT, ContentType.QUEUE_TABLE, ContentType.CAROUSEL_TABLE];
+                let layers = [...state.activeLayers];
+                if (exclusive.includes(type)) layers = layers.filter(t => !exclusive.includes(t));
+                if (!layers.includes(type)) layers.push(type);
+                setState(p => ({ ...p, activeLayers: layers, selectedType: type }));
+            };
+
+            const handleUpdateCarousel = (updates) => {
+                setState(p => {
+                    const newC = { ...p.carousel, ...updates };
+                    if (updates.itemType && updates.itemType !== p.carousel.itemType) {
+                        newC.fields = [...ITEM_DEFAULTS[updates.itemType]];
+                    }
+                    return { ...p, carousel: newC };
+                });
+            };
+
+            return (
+                <div className="flex h-screen w-full overflow-hidden text-sm select-none">
+                    <Sidebar activeLayers={state.activeLayers} selectedType={state.selectedType} 
+                             onSelect={t => setState(p => ({ ...p, selectedType: t }))} 
+                             onRemove={t => setState(p => ({ ...p, activeLayers: p.activeLayers.filter(l => l !== t), selectedType: p.selectedType === t ? null : p.selectedType }))} />
+                    
+                    <div className="flex flex-col flex-1 relative bg-gray-50 overflow-hidden">
+                        <header className="h-14 bg-white border-b flex items-center justify-between px-6 z-10 shadow-sm">
+                            <div className="flex items-center space-x-3">
+                                <span className="font-bold text-lg text-blue-600">EDITOR</span>
+                                <div className="h-6 w-px bg-gray-200"></div>
+                                <span className="font-semibold text-gray-800">{state.isEditingLayout ? '格子排版模式' : '大屏内容管理'}</span>
+                            </div>
+                            <div className="flex items-center space-x-3">
+                                <button className="px-4 py-1.5 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium">预览</button>
+                                <button className="px-5 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-bold shadow-md shadow-blue-200 active:scale-95 transition-all">保存发布</button>
+                            </div>
+                        </header>
+                        
+                        {!state.isEditingLayout && <Toolbar onAdd={handleAddContent} activeLayers={state.activeLayers} />}
+                        
+                        <CanvasArea state={state} onUpdateCarousel={handleUpdateCarousel} />
+
+                        <div className="absolute bottom-4 right-4 bg-white rounded-full shadow-lg border px-4 py-2 flex items-center space-x-4">
+                           <div className="flex items-center space-x-2 border-r pr-4">
+                             <button className="p-1 hover:bg-gray-100 rounded">-</button>
+                             <span className="text-gray-600 font-bold">50%</span>
+                             <button className="p-1 hover:bg-gray-100 rounded">+</button>
+                           </div>
+                           <button className="text-gray-400 hover:text-blue-600"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/></svg></button>
+                        </div>
+                    </div>
+                    
+                    <ConfigPanel state={state} onUpdateCarousel={handleUpdateCarousel} setEditingLayout={v => setState(p => ({ ...p, isEditingLayout: v }))} />
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
